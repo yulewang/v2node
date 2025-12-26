@@ -103,7 +103,7 @@ install_v2node() {
     # 获取版本
     last_version=$(curl -Ls "https://api.github.com/repos/${repo}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
     [[ -z "$last_version" ]] && { echo "获取版本失败"; exit 1; }
-    echo -e "${green}获取版本成功et${last_version}${plain}"
+    echo -e "${green}获取版本成功${last_version}${plain}"
 
     # 下载与解压
     wget -qO v2node-linux.zip "https://github.com/${repo}/releases/download/${last_version}/v2node-linux-${arch}.zip"
