@@ -125,7 +125,7 @@ func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*xray.OutboundHand
 			// 检查当前节点的端口是否在屏蔽列表中
 			isMatch := false
 			for _, p := range localRoute.BlockCNPorts {
-				if info.ServerPort == p { // v2board 节点信息中的端口字段通常是 ServerPort
+				if info.Port == p { // v2board 节点信息中的端口字段通常是 ServerPort
 					isMatch = true
 					break
 				}
