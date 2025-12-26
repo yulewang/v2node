@@ -35,7 +35,7 @@ else
 fi
 
 ########################
-# 参数解析 (已移除版本指定功能)
+# 参数解析
 ########################
 API_HOST_ARG=""
 NODE_ID_ARG=""
@@ -51,7 +51,7 @@ parse_args() {
             --api-key)
                 API_KEY_ARG="$2"; shift 2 ;;
             *)
-                shift ;; # 忽略所有无法识别的参数
+                shift ;;
         esac
     done
 }
@@ -62,49 +62,39 @@ if [[ $arch == "x86_64" || $arch == "x64" || $arch == "amd64" ]]; then
     arch="64"
 elif [[ $arch == "aarch64" || $arch == "arm64" ]]; then
     arch="arm64-v8a"
-elif [[ $arch == "s390x" ]]; then
-    arch="s390x"
 else
     arch="64"
-    echo -e "${red}检测架构失败，使用默认架构: ${arch}${plain}"
 fi
 
-# 安装基础依赖
 install_base() {
     if [[ x"${release}" == x"centos" ]]; then
         yum install -y wget curl unzip tar epel-release pv >/dev/null 2>&1
     elif [[ x"${release}" == x"alpine" ]]; then
         apk add --no-cache wget curl unzip tar pv >/dev/null 2>&1
-    elif [[ x"${release}" == x"debian" || x"${release}" == x"ubuntu" ]]; then
+    else
         apt-get update -y >/dev/null 2>&1
         apt-get install -y wget curl unzip tar pv >/dev/null 2>&1
-    elif [[ x"${release}" == x"arch" ]]; then
-        pacman -Sy --noconfirm wget curl unzip tar pv >/dev/null 2>&1
     fi
     mkdir -p /etc/v2node
 }
 
-# 检查运行状态
 check_status() {
-    if [[ ! -f /usr/local/v2node/v2node ]]; then
-        return 2
-    fi
+    if [[ ! -f /usr/local/v2node/v2node ]]; then return 2; fi
     if [[ x"${release}" == x"alpine" ]]; then
-        status=$(service v2node status 2>&1 | grep -E "started|running")
-        [[ -n "$status" ]] && return 0 || return 1
+        service v2node status 2>&1 | grep -E "started|running" >/dev/null 2>&1
+        return $?
     else
-        status=$(systemctl is-active v2node)
-        [[ x"${status}" == x"active" ]] && return 0 || return 1
+        [[ $(systemctl is-active v2node) == "active" ]] && return 0 || return 1
     fi
 }
 
-# 生成配置文件
 generate_v2node_config() {
-    local api_host="$1"
-    local node_id="$2"
-    local api_key="$3"
+    local host=$1
+    local id=$2
+    local key=$3
 
-    mkdir -p /etc/v2node >/dev/null 2>&1
+    echo -e "${yellow}正在生成配置文件...${plain}"
+    mkdir -p /etc/v2node
     cat > /etc/v2node/config.json <<EOF
 {
     "Log": {
@@ -114,21 +104,19 @@ generate_v2node_config() {
     },
     "Nodes": [
         {
-            "ApiHost": "${api_host}",
-            "NodeID": ${node_id},
-            "ApiKey": "${api_key}",
+            "ApiHost": "${host}",
+            "NodeID": ${id},
+            "ApiKey": "${key}",
             "Timeout": 15
         }
     ]
 }
 EOF
-    # 预留 dns.json 路径
+    # 确保 dns.json 存在以适配自定义逻辑
     if [[ ! -f /etc/v2node/dns.json ]]; then
         echo '{"servers":["localhost"]}' > /etc/v2node/dns.json
     fi
 
-    echo -e "${green}配置文件已生成：/etc/v2node/config.json${plain}"
-    
     if [[ x"${release}" == x"alpine" ]]; then
         service v2node restart
     else
@@ -137,74 +125,37 @@ EOF
     
     sleep 2
     if check_status; then
-        echo -e "${green}v2node 启动/重启成功${plain}"
+        echo -e "${green}v2node 启动成功并已应用配置。${plain}"
     else
-        echo -e "${red}v2node 启动失败，请检查配置或使用 v2node log 查看日志${plain}"
+        echo -e "${red}v2node 启动失败，请检查参数是否正确。${plain}"
     fi
 }
 
 install_v2node() {
-    local repo_url="yulewang/v2node"
+    local repo="yulewang/v2node"
+    mkdir -p /usr/local/v2node
+    cd /usr/local/v2node
 
-    if [[ -e /usr/local/v2node/ ]]; then
-        rm -rf /usr/local/v2node/
-    fi
+    last_version=$(curl -Ls "https://api.github.com/repos/${repo}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    if [[ -z "$last_version" ]]; then echo "无法获取版本"; exit 1; fi
 
-    mkdir -p /usr/local/v2node/
-    cd /usr/local/v2node/
-
-    # 获取最新版本
-    echo -e "${green}正在从 GitHub 获取最新版本信息...${plain}"
-    last_version=$(curl -Ls "https://api.github.com/repos/${repo_url}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    echo -e "${green}开始下载 v2node ${last_version}...${plain}"
+    url="https://github.com/${repo}/releases/download/${last_version}/v2node-linux-${arch}.zip"
+    curl -sL "$url" | pv -s 30M -W -N "下载进度" > v2node-linux.zip
     
-    if [[ ! -n "$last_version" ]]; then
-        echo -e "${red}获取版本失败，请检查网络是否能访问 GitHub API${plain}"
-        exit 1
-    fi
-
-    echo -e "${green}检测到最新版本：${last_version}，开始安装...${plain}"
-
-    # 下载
-    url="https://github.com/${repo_url}/releases/download/${last_version}/v2node-linux-${arch}.zip"
-    curl -sL "$url" | pv -s 30M -W -N "下载进度" > /usr/local/v2node/v2node-linux.zip
-    
-    if [[ $? -ne 0 || ! -s v2node-linux.zip ]]; then
-        echo -e "${red}下载二进制文件失败！${plain}"
-        exit 1
-    fi
-
     unzip -o v2node-linux.zip && rm -f v2node-linux.zip
     chmod +x v2node
-    
-    # 同步资源文件
-    mkdir -p /etc/v2node
-    [[ -f geoip.dat ]] && cp -f geoip.dat /etc/v2node/
-    [[ -f geosite.dat ]] && cp -f geosite.dat /etc/v2node/
+    cp -f geoip.dat geosite.dat /etc/v2node/ 2>/dev/null
 
-    # 服务安装
-    if [[ x"${release}" == x"alpine" ]]; then
-        cat <<EOF > /etc/init.d/v2node
-#!/sbin/openrc-run
-name="v2node"
-command="/usr/local/v2node/v2node"
-command_args="server"
-command_user="root"
-pidfile="/run/v2node.pid"
-command_background="yes"
-depend() { need net; }
-EOF
-        chmod +x /etc/init.d/v2node
-        rc-update add v2node default
-    else
+    # 写入服务文件
+    if [[ x"${release}" != x"alpine" ]]; then
         cat <<EOF > /etc/systemd/system/v2node.service
 [Unit]
 Description=v2node Service
-After=network.target nss-lookup.target
+After=network.target
 
 [Service]
 User=root
-Type=simple
-LimitNOFILE=999999
 WorkingDirectory=/usr/local/v2node/
 ExecStart=/usr/local/v2node/v2node server
 Restart=always
@@ -217,24 +168,29 @@ EOF
         systemctl enable v2node
     fi
 
-    # 自动化配置逻辑
+    # 核心：判断是否执行配置生成
+    echo "--------------------------------"
+    echo "检测到参数状态："
+    echo "API Host: ${API_HOST_ARG:-未设置}"
+    echo "Node ID:  ${NODE_ID_ARG:-未设置}"
+    echo "API Key:  ${API_KEY_ARG:-未设置}"
+    echo "--------------------------------"
+
     if [[ -n "$API_HOST_ARG" && -n "$NODE_ID_ARG" && -n "$API_KEY_ARG" ]]; then
         generate_v2node_config "$API_HOST_ARG" "$NODE_ID_ARG" "$API_KEY_ARG"
     else
-        # 尝试启动已存在的配置
+        echo -e "${yellow}缺少必要参数，跳过自动配置步骤。${plain}"
         if [[ -f /etc/v2node/config.json ]]; then
-             [[ x"${release}" == x"alpine" ]] && service v2node start || systemctl start v2node
+            [[ x"${release}" == x"alpine" ]] && service v2node start || systemctl start v2node
         fi
     fi
 
-    # 安装管理脚本
-    curl -o /usr/bin/v2node -Ls "https://raw.githubusercontent.com/${repo_url}/main/script/v2node.sh"
+    # 下载管理脚本
+    curl -o /usr/bin/v2node -Ls "https://raw.githubusercontent.com/${repo}/main/script/v2node.sh"
     chmod +x /usr/bin/v2node
-
-    echo -e "${green}v2node ${last_version} 安装成功。${plain}"
+    echo -e "${green}安装完成。${plain}"
 }
 
-# 执行主流程
 parse_args "$@"
 install_base
 install_v2node
