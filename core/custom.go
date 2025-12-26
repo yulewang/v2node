@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net"
 	"strings"
+	"os"
 
 	panel "github.com/wyx2685/v2node/api/v2board"
 	"github.com/xtls/xray-core/app/dns"
@@ -44,19 +45,61 @@ func hasOutboundWithTag(list []*core.OutboundHandlerConfig, tag string) bool {
 
 func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*core.OutboundHandlerConfig, *router.Config, error) {
 	//dns
-	queryStrategy := "UseIPv4v6"
-	if !hasPublicIPv6() {
-		queryStrategy = "UseIPv4"
+	// queryStrategy := "UseIPv4v6"
+	// if !hasPublicIPv6() {
+	// 	queryStrategy = "UseIPv4"
+	// }
+	// coreDnsConfig := &coreConf.DNSConfig{
+	// 	Servers: []*coreConf.NameServerConfig{
+	// 		{
+	// 			Address: &coreConf.Address{
+	// 				Address: xnet.ParseAddress("localhost"),
+	// 			},
+	// 		},
+	// 	},
+	// 	QueryStrategy: queryStrategy,
+	// }
+
+	var dnsConfig *conf.DNSConfig
+	dnsFile := "/etc/v2node/dns.json"
+
+	// 优先检查外部 dns.json
+	if _, err := os.Stat(dnsFile); err == nil {
+		content, err := os.ReadFile(dnsFile)
+		if err == nil {
+			var externalDns conf.DNSConfig
+			if err := json.Unmarshal(content, &externalDns); err == nil {
+				log.Printf("[DNS] 检测到外部配置 %s，正在应用自定义规则（已跳过默认 localhost）", dnsFile)
+				dnsConfig = &externalDns
+			} else {
+				log.Printf("[DNS] 错误: %s 解析失败，回退到默认逻辑: %v", dnsFile, err)
+			}
+		}
 	}
-	coreDnsConfig := &coreConf.DNSConfig{
-		Servers: []*coreConf.NameServerConfig{
-			{
-				Address: &coreConf.Address{
-					Address: xnet.ParseAddress("localhost"),
+
+	// 如果没有外部文件，或者解析失败，执行原有逻辑
+	if dnsConfig == nil {
+		var dnsServers []*dns.ServerConfig
+		for _, server := range nodeConfig.DnsServers {
+			dnsServers = append(dnsServers, &dns.ServerConfig{
+				Address: &net.IPOrDomain{
+					Address: &net.IPOrDomain_Ip{
+						Ip: net.ParseIP(server),
+					},
+				},
+			})
+		}
+		// 默认添加 localhost
+		dnsServers = append(dnsServers, &dns.ServerConfig{
+			Address: &net.IPOrDomain{
+				Address: &net.IPOrDomain_Domain{
+					Domain: "localhost",
 				},
 			},
-		},
-		QueryStrategy: queryStrategy,
+		})
+		dnsConfig = &conf.DNSConfig{
+			Servers: dnsServers,
+		}
 	}
 	//outbound
 	defaultoutbound, _ := buildDefaultOutbound()
