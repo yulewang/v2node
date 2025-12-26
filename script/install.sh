@@ -143,7 +143,7 @@ EOF
     fi
 
     # 下载管理脚本
-    curl -o /usr/bin/v2node -Ls "https://raw.githubusercontent.com/${repo}/main/script/v2node.sh"
+    curl -o /usr/bin/v2node -Ls "https://raw.githubusercontent.com/${repo}/yulewang-patch-1/script/v2node.sh"
     chmod +x /usr/bin/v2node
 }
 
