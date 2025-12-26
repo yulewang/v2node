@@ -103,12 +103,13 @@ func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*xray.OutboundHand
 		DomainStrategy: &domainStrategy,
 	}
 
-	// --- 3. 核心屏蔽逻辑：通过 NodeId 匹配 ---
+	// --- 3. 核心屏蔽逻辑：通过 NodeID 匹配 ---
 	if len(localRoute.BlockCNNodes) > 0 {
 		for _, info := range infos {
 			isMatch := false
 			for _, id := range localRoute.BlockCNNodes {
-				if info.NodeId == id {
+				// 关键修复点：将 NodeId 改为 NodeID
+				if info.NodeID == id {
 					isMatch = true
 					break
 				}
@@ -122,8 +123,9 @@ func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*xray.OutboundHand
 					"outboundTag": "block",
 				}
 				rawBlockRule, _ := json.Marshal(blockRule)
+				// 注入屏蔽规则到首位
 				coreRouterConfig.RuleList = append([]json.RawMessage{rawBlockRule}, coreRouterConfig.RuleList...)
-				log.Printf("[Route] 已为 NodeId %d (%s) 注入大陆屏蔽规则", info.NodeId, info.Tag)
+				log.Printf("[Route] 已为 NodeID %d (%s) 注入大陆屏蔽规则", info.NodeID, info.Tag)
 			}
 		}
 	}
