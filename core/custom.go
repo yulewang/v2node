@@ -104,14 +104,12 @@ func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*xray.OutboundHand
 		DomainStrategy: &domainStrategy,
 	}
 
-	// --- 核心修复：通过 Tag 匹配端口并注入屏蔽规则 ---
-	if len(localRoute.BlockCNPorts) > 0 {
+    // --- 通过 NodeID 匹配并注入规则 ---
+	if len(localRoute.BlockCNNodes) > 0 {
 		for _, info := range infos {
 			isMatch := false
-			for _, p := range localRoute.BlockCNPorts {
-				// V2Board 的 Tag 格式通常包含端口号，如 "_11114"
-				portSuffix := fmt.Sprintf("_%d", p)
-				if strings.HasSuffix(info.Tag, portSuffix) {
+			for _, id := range localRoute.BlockCNNodes {
+				if info.NodeID == id { // 匹配 NodeID
 					isMatch = true
 					break
 				}
@@ -125,8 +123,9 @@ func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*xray.OutboundHand
 					"outboundTag": "block",
 				}
 				rawBlockRule, _ := json.Marshal(blockRule)
+				// 放在 RuleList 最前面
 				coreRouterConfig.RuleList = append([]json.RawMessage{rawBlockRule}, coreRouterConfig.RuleList...)
-				log.Printf("[Route] 已通过 Tag 匹配为端口注入屏蔽大陆 IP 规则: %s", info.Tag)
+				log.Printf("[Route] ！！！命中屏蔽规则！！！ 已为 NodeID %d (Tag: %s) 注入大陆来源 IP 拦截器", info.NodeID, info.Tag)
 			}
 		}
 	}
