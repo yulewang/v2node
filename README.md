@@ -9,7 +9,7 @@ A v2board backend base on moddified xray-core.
 ### 一键安装
 
 ```
-wget -N https://raw.githubusercontent.com/yulewang/v2node/master/script/install.sh && bash install.sh
+wget -N https://raw.githubusercontent.com/yulewang/v2node/yulewang-patch-1/script/install.sh && bash install.sh
 ```
 
 ## 构建
