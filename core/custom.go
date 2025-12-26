@@ -46,11 +46,11 @@ func hasOutboundWithTag(list []*xray.OutboundHandlerConfig, tag string) bool {
 // 定义本地路由高级配置结构
 type LocalRouteConfig struct {
 	DomainStrategy string `json:"domainStrategy"`
-	BlockCNNodes   []int  `json:"block_cn_nodes"` // 需要屏蔽大陆来源的节点 ID 列表
+	BlockCNNodes   []int  `json:"block_cn_nodes"` 
 }
 
 func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*xray.OutboundHandlerConfig, *router.Config, error) {
-	// --- DNS 逻辑 ---
+	// --- DNS 初始化 ---
 	queryStrategy := "UseIPv4v6"
 	if !hasPublicIPv6() {
 		queryStrategy = "UseIPv4"
@@ -60,8 +60,7 @@ func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*xray.OutboundHand
 	dnsFile := "/etc/v2node/dns.json"
 
 	if _, err := os.Stat(dnsFile); err == nil {
-		content, err := os.ReadFile(dnsFile)
-		if err == nil {
+		if content, err := os.ReadFile(dnsFile); err == nil {
 			var externalDns coreConf.DNSConfig
 			if err := json.Unmarshal(content, &externalDns); err == nil {
 				log.Printf("[DNS] 成功加载配置 %s", dnsFile)
@@ -79,11 +78,15 @@ func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*xray.OutboundHand
 		}
 	}
 
-	// --- 1. 读取本地路由配置 ---
+	// --- 1. 读取并解析本地路由配置 ---
 	localRouteFile := "/etc/v2node/route.json"
 	localRoute := LocalRouteConfig{DomainStrategy: "AsIs"}
 	if data, err := os.ReadFile(localRouteFile); err == nil {
-		_ = json.Unmarshal(data, &localRoute)
+		if err := json.Unmarshal(data, &localRoute); err == nil {
+			log.Printf("[Route] 配置文件读取成功: %+v", localRoute)
+		} else {
+			log.Printf("[Route] 配置文件解析失败: %v", err)
+		}
 	}
 
 	// --- 2. 初始化 Outbound 和 Router ---
@@ -103,33 +106,35 @@ func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*xray.OutboundHand
 		DomainStrategy: &domainStrategy,
 	}
 
-	// --- 3. 核心屏蔽逻辑：通过 Id 匹配 (已根据报错修正为 Id) ---
-	if len(localRoute.BlockCNNodes) > 0 {
-		for _, info := range infos {
-			isMatch := false
-			for _, targetID := range localRoute.BlockCNNodes {
-				if info.Id == targetID {
-					isMatch = true
-					break
-				}
+	// --- 3. 核心屏蔽逻辑：带详细调试输出 ---
+	log.Printf("[Route] 开始扫描节点信息，当前屏蔽列表: %v", localRoute.BlockCNNodes)
+	for _, info := range infos {
+		// 打印每个检测到的节点 ID，用于调试排查
+		log.Printf("[Route] 检测到可用节点: Id=%d, Tag=%s", info.Id, info.Tag)
+		
+		isMatch := false
+		for _, targetID := range localRoute.BlockCNNodes {
+			if info.Id == targetID {
+				isMatch = true
+				break
 			}
+		}
 
-			if isMatch {
-				blockRule := map[string]interface{}{
-					"type":        "field",
-					"inboundTag":  []string{info.Tag}, 
-					"source":      []string{"geoip:cn"},
-					"outboundTag": "block",
-				}
-				rawBlockRule, _ := json.Marshal(blockRule)
-				// 注入屏蔽规则到首位
-				coreRouterConfig.RuleList = append([]json.RawMessage{rawBlockRule}, coreRouterConfig.RuleList...)
-				log.Printf("[Route] 已为 Node Id %d (%s) 注入大陆屏蔽规则", info.Id, info.Tag)
+		if isMatch {
+			blockRule := map[string]interface{}{
+				"type":        "field",
+				"inboundTag":  []string{info.Tag}, 
+				"source":      []string{"geoip:cn"},
+				"outboundTag": "block",
 			}
+			rawBlockRule, _ := json.Marshal(blockRule)
+			// 注入到最前端
+			coreRouterConfig.RuleList = append([]json.RawMessage{rawBlockRule}, coreRouterConfig.RuleList...)
+			log.Printf("[Route] 命中拦截规则！已为 Id %d 注入 [geoip:cn -> block] 路由", info.Id)
 		}
 	}
 
-	// --- 4. 面板常规规则处理 ---
+	// --- 4. 处理面板路由逻辑 ---
 	for _, info := range infos {
 		if len(info.Common.Routes) == 0 { continue }
 		for _, route := range info.Common.Routes {
