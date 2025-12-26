@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net"
 	"strings"
+	"log"
 	"os"
 
 	panel "github.com/wyx2685/v2node/api/v2board"
@@ -45,21 +46,6 @@ func hasOutboundWithTag(list []*core.OutboundHandlerConfig, tag string) bool {
 
 func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*core.OutboundHandlerConfig, *router.Config, error) {
 	//dns
-	// queryStrategy := "UseIPv4v6"
-	// if !hasPublicIPv6() {
-	// 	queryStrategy = "UseIPv4"
-	// }
-	// coreDnsConfig := &coreConf.DNSConfig{
-	// 	Servers: []*coreConf.NameServerConfig{
-	// 		{
-	// 			Address: &coreConf.Address{
-	// 				Address: xnet.ParseAddress("localhost"),
-	// 			},
-	// 		},
-	// 	},
-	// 	QueryStrategy: queryStrategy,
-	// }
-
 	var dnsConfig *conf.DNSConfig
 	dnsFile := "/etc/v2node/dns.json"
 
