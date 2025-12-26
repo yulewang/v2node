@@ -281,6 +281,7 @@ install_v2node() {
         fi
     else
     last_version=$version_param
+        echo -e "${green}自动安装最新版本: ${last_version}，版本选择: v2node-linux-${arch}.zip，开始安装...${plain}"
         url="https://github.com/yulewang/v2node/releases/download/${last_version}/v2node-linux-${arch}.zip"
         curl -sL "$url" | pv -s 30M -W -N "下载进度" > /usr/local/v2node/v2node-linux.zip
         if [[ $? -ne 0 ]]; then
