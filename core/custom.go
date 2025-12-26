@@ -43,6 +43,12 @@ func hasOutboundWithTag(list []*xray.OutboundHandlerConfig, tag string) bool {
 	return false
 }
 
+// 定义本地路由高级配置结构
+type LocalRouteConfig struct {
+	DomainStrategy string   `json:"domainStrategy"`
+	BlockCNPorts   []int    `json:"block_cn_ports"` // 需要屏蔽大陆来源的端口列表
+}
+
 func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*xray.OutboundHandlerConfig, *router.Config, error) {
 	// --- DNS 策略初始化 ---
 	queryStrategy := "UseIPv4v6"
@@ -84,6 +90,15 @@ func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*xray.OutboundHand
 		}
 	}
 
+	// --- 新增：读取本地路由高级配置 ---
+	localRouteFile := "/etc/v2node/route.json"
+	localRoute := LocalRouteConfig{
+		DomainStrategy: "AsIs", // 默认值
+	}
+	if data, err := os.ReadFile(localRouteFile); err == nil {
+		json.Unmarshal(data, &localRoute)
+	}
+
 	// --- Outbound 初始化 ---
 	defaultoutbound, _ := buildDefaultOutbound()
 	coreOutboundConfig := append([]*xray.OutboundHandlerConfig{}, defaultoutbound)
@@ -93,7 +108,7 @@ func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*xray.OutboundHand
 	coreOutboundConfig = append(coreOutboundConfig, dnsOut)
 
 	// --- Router 初始化 ---
-	domainStrategy := "AsIs"
+	domainStrategy := localRoute.DomainStrategy // 使用本地配置的策略，如 IPOnDemand
 	dnsRule, _ := json.Marshal(map[string]interface{}{
 		"port":        "53",
 		"network":     "udp",
@@ -102,6 +117,34 @@ func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*xray.OutboundHand
 	coreRouterConfig := &coreConf.RouterConfig{
 		RuleList:       []json.RawMessage{dnsRule},
 		DomainStrategy: &domainStrategy,
+	}
+
+    // --- 注入来源 IP 屏蔽规则 ---
+	if len(localRoute.BlockCNPorts) > 0 {
+		for _, info := range infos {
+			// 检查当前节点的端口是否在屏蔽列表中
+			isMatch := false
+			for _, p := range localRoute.BlockCNPorts {
+				if info.ServerPort == p { // v2board 节点信息中的端口字段通常是 ServerPort
+					isMatch = true
+					break
+				}
+			}
+
+			if isMatch {
+				// 构造类似 XrayR 的 source 屏蔽规则
+				blockRule := map[string]interface{}{
+					"type":        "field",
+					"inboundTag":  []string{info.Tag}, // 对应该端口的入站标识
+					"source":      []string{"geoip:cn"},
+					"outboundTag": "block",
+				}
+				rawBlockRule, _ := json.Marshal(blockRule)
+				// 插入到 RuleList 的最前面，确保优先级最高
+				coreRouterConfig.RuleList = append([]json.RawMessage{rawBlockRule}, coreRouterConfig.RuleList...)
+				log.Printf("[Route] 已为端口 %d (Tag: %s) 注入大陆来源 IP 屏蔽规则", info.ServerPort, info.Tag)
+			}
+		}
 	}
 
 	// --- 处理面板规则 ---
