@@ -46,46 +46,41 @@ func hasOutboundWithTag(list []*core.OutboundHandlerConfig, tag string) bool {
 
 func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*core.OutboundHandlerConfig, *router.Config, error) {
 	//dns
-	var dnsConfig *conf.DNSConfig
+var coreDnsConfig *coreConf.DNSConfig
 	dnsFile := "/etc/v2node/dns.json"
 
-	// 优先检查外部 dns.json
+	// 1. 优先检查外部 dns.json
 	if _, err := os.Stat(dnsFile); err == nil {
 		content, err := os.ReadFile(dnsFile)
 		if err == nil {
-			var externalDns conf.DNSConfig
+			var externalDns coreConf.DNSConfig
 			if err := json.Unmarshal(content, &externalDns); err == nil {
-				log.Printf("[DNS] 检测到外部配置 %s，正在应用自定义规则（已跳过默认 localhost）", dnsFile)
-				dnsConfig = &externalDns
-			} else {
-				log.Printf("[DNS] 错误: %s 解析失败，回退到默认逻辑: %v", dnsFile, err)
+				log.Printf("[DNS] 检测到外部配置 %s，正在应用自定义规则", dnsFile)
+				coreDnsConfig = &externalDns
 			}
 		}
 	}
 
-	// 如果没有外部文件，或者解析失败，执行原有逻辑
-	if dnsConfig == nil {
-		var dnsServers []*dns.ServerConfig
-		for _, server := range nodeConfig.DnsServers {
-			dnsServers = append(dnsServers, &dns.ServerConfig{
-				Address: &net.IPOrDomain{
-					Address: &net.IPOrDomain_Ip{
-						Ip: net.ParseIP(server),
+	// 2. 如果没有外部文件，执行原有逻辑
+	if coreDnsConfig == nil {
+		coreDnsConfig = &coreConf.DNSConfig{
+			Servers: make([]*coreConf.NameServerConfig, 0),
+		}
+		for _, info := range infos {
+			for _, server := range info.Common.DnsServers {
+				coreDnsConfig.Servers = append(coreDnsConfig.Servers, &coreConf.NameServerConfig{
+					Address: &coreConf.Address{
+						Address: xnet.ParseAddress(server),
 					},
-				},
-			})
+				})
+			}
 		}
 		// 默认添加 localhost
-		dnsServers = append(dnsServers, &dns.ServerConfig{
-			Address: &net.IPOrDomain{
-				Address: &net.IPOrDomain_Domain{
-					Domain: "localhost",
-				},
+		coreDnsConfig.Servers = append(coreDnsConfig.Servers, &coreConf.NameServerConfig{
+			Address: &coreConf.Address{
+				Address: xnet.ParseAddress("localhost"),
 			},
 		})
-		dnsConfig = &conf.DNSConfig{
-			Servers: dnsServers,
-		}
 	}
 	//outbound
 	defaultoutbound, _ := buildDefaultOutbound()
