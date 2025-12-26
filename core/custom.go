@@ -50,7 +50,7 @@ type LocalRouteConfig struct {
 }
 
 func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*xray.OutboundHandlerConfig, *router.Config, error) {
-	// --- DNS 策略初始化 ---
+	// --- DNS 逻辑 ---
 	queryStrategy := "UseIPv4v6"
 	if !hasPublicIPv6() {
 		queryStrategy = "UseIPv4"
@@ -83,12 +83,10 @@ func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*xray.OutboundHand
 	localRouteFile := "/etc/v2node/route.json"
 	localRoute := LocalRouteConfig{DomainStrategy: "AsIs"}
 	if data, err := os.ReadFile(localRouteFile); err == nil {
-		if err := json.Unmarshal(data, &localRoute); err == nil {
-			log.Printf("[Route] 成功加载路由配置: %s", localRouteFile)
-		}
+		_ = json.Unmarshal(data, &localRoute)
 	}
 
-	// --- 初始化 Outbound 和 Router ---
+	// --- 2. 初始化 Outbound 和 Router ---
 	defaultoutbound, _ := buildDefaultOutbound()
 	coreOutboundConfig := append([]*xray.OutboundHandlerConfig{}, defaultoutbound)
 	block, _ := buildBlockOutbound()
@@ -105,12 +103,11 @@ func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*xray.OutboundHand
 		DomainStrategy: &domainStrategy,
 	}
 
-	// --- 2. 核心：通过 NodeId 匹配并注入屏蔽规则 ---
+	// --- 3. 核心屏蔽逻辑：通过 NodeId 匹配 ---
 	if len(localRoute.BlockCNNodes) > 0 {
 		for _, info := range infos {
 			isMatch := false
 			for _, id := range localRoute.BlockCNNodes {
-				// 修复点：V2Board 的 NodeInfo 结构体中字段名为 NodeId
 				if info.NodeId == id {
 					isMatch = true
 					break
@@ -121,4 +118,60 @@ func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*xray.OutboundHand
 				blockRule := map[string]interface{}{
 					"type":        "field",
 					"inboundTag":  []string{info.Tag}, 
-					"source":      []string{"geoip:cn
+					"source":      []string{"geoip:cn"},
+					"outboundTag": "block",
+				}
+				rawBlockRule, _ := json.Marshal(blockRule)
+				coreRouterConfig.RuleList = append([]json.RawMessage{rawBlockRule}, coreRouterConfig.RuleList...)
+				log.Printf("[Route] 已为 NodeId %d (%s) 注入大陆屏蔽规则", info.NodeId, info.Tag)
+			}
+		}
+	}
+
+	// --- 4. 面板常规规则处理 ---
+	for _, info := range infos {
+		if len(info.Common.Routes) == 0 { continue }
+		for _, route := range info.Common.Routes {
+			switch route.Action {
+			case "dns":
+				if route.ActionValue == nil { continue }
+				coreDnsConfig.Servers = append(coreDnsConfig.Servers, &coreConf.NameServerConfig{
+					Address: &coreConf.Address{Address: xnet.ParseAddress(*route.ActionValue)},
+					Domains: route.Match,
+				})
+			case "block", "block_ip", "block_port", "protocol":
+				rule := map[string]interface{}{
+					"inboundTag": []string{info.Tag}, "outboundTag": "block",
+				}
+				if route.Action == "block" { rule["domain"] = route.Match }
+				if route.Action == "block_ip" { rule["ip"] = route.Match }
+				if route.Action == "block_port" { rule["port"] = strings.Join(route.Match, ",") }
+				if route.Action == "protocol" { rule["protocol"] = route.Match }
+				raw, _ := json.Marshal(rule)
+				coreRouterConfig.RuleList = append(coreRouterConfig.RuleList, raw)
+			case "route", "route_ip", "default_out":
+				if route.ActionValue == nil { continue }
+				outbound := &coreConf.OutboundDetourConfig{}
+				if err := json.Unmarshal([]byte(*route.ActionValue), outbound); err == nil {
+					rule := map[string]interface{}{
+						"inboundTag": []string{info.Tag}, "outboundTag": outbound.Tag,
+					}
+					if route.Action == "route" { rule["domain"] = route.Match }
+					if route.Action == "route_ip" { rule["ip"] = route.Match }
+					if route.Action == "default_out" { rule["network"] = "tcp,udp" }
+					raw, _ := json.Marshal(rule)
+					coreRouterConfig.RuleList = append(coreRouterConfig.RuleList, raw)
+					if !hasOutboundWithTag(coreOutboundConfig, outbound.Tag) {
+						if custom, err := outbound.Build(); err == nil {
+							coreOutboundConfig = append(coreOutboundConfig, custom)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	DnsConfig, _ := coreDnsConfig.Build()
+	RouterConfig, _ := coreRouterConfig.Build()
+	return DnsConfig, coreOutboundConfig, RouterConfig, nil
+}
