@@ -56,10 +56,11 @@ parse_args() {
             --*)
                 echo "未知参数: $1"; exit 1 ;;
             *)
-                # 兼容第一个位置参数作为版本号
-                if [[ -z "$VERSION_ARG" ]]; then
+                # 仅当参数不以 -- 开头且 VERSION_ARG 为空时，才视为版本号
+                if [[ ! "$1" =~ ^-- ]] && [[ -z "$VERSION_ARG" ]]; then
                     VERSION_ARG="$1"; shift
                 else
+                    # 忽略无法识别的参数或位置错误的 Flag 值
                     shift
                 fi ;;
         esac
