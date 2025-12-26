@@ -104,7 +104,7 @@ generate_v2node_config() {
     local node_id="$2"
     local api_key="$3"
 
-    mkdir -p /etc/v2node
+    mkdir -p /etc/v2node >/dev/null 2>&1
     cat > /etc/v2node/config.json <<EOF
 {
     "Log": {
