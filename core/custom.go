@@ -140,11 +140,19 @@ func GetCustomConfig(infos []*panel.NodeInfo) (*dns.Config, []*xray.OutboundHand
 		for _, route := range info.Common.Routes {
 			switch route.Action {
 			case "dns":
-				if route.ActionValue == nil { continue }
-				coreDnsConfig.Servers = append(coreDnsConfig.Servers, &coreConf.NameServerConfig{
-					Address: &coreConf.Address{Address: xnet.ParseAddress(*route.ActionValue)},
-					Domains: route.Match,
-				})
+				if route.ActionValue == nil {
+					continue
+				}
+				server := &coreConf.NameServerConfig{
+					Address: &coreConf.Address{
+						Address: xnet.ParseAddress(*route.ActionValue),
+					},
+				}
+				if len(route.Match) != 0 {
+					server.Domains = route.Match
+					server.SkipFallback = true
+				}
+				coreDnsConfig.Servers = append(coreDnsConfig.Servers, server)
 			case "block", "block_ip", "block_port", "protocol":
 				rule := map[string]interface{}{
 					"inboundTag": []string{info.Tag}, "outboundTag": "block",
