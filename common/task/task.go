@@ -27,13 +27,11 @@ func (t *Task) Start(first bool) error {
 	t.Running = true
 	t.Stop = make(chan struct{})
 	t.Access.Unlock()
-
 	go func() {
 		timer := time.NewTimer(t.Interval)
 		defer timer.Stop()
 		if first {
 			if err := t.ExecuteWithTimeout(); err != nil {
-				t.safeStop()
 				return
 			}
 		}

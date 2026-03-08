@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/ratelimit"
 	panel "github.com/wyx2685/v2node/api/v2board"
 	"github.com/wyx2685/v2node/common/format"
+	"github.com/wyx2685/v2node/common/rate"
 )
 
 var limitLock sync.RWMutex
@@ -27,7 +27,7 @@ type Limiter struct {
 	OldUserOnline *sync.Map      // Key: Ip, value: Uid
 	UUIDtoUID     map[string]int // Key: UUID, value: Uid
 	UserLimitInfo *sync.Map      // Key: TagUUID value: UserLimitInfo
-	SpeedLimiter  *sync.Map      // key: TagUUID, value: *ratelimit.Bucket
+	SpeedLimiter  *sync.Map      // key: TagUUID, value: *DynamicBucket
 	AliveList     map[int]int    // Key: Uid, value: alive_ip
 }
 
@@ -85,13 +85,33 @@ func DeleteLimiter(tag string) {
 	limitLock.Unlock()
 }
 
-func (l *Limiter) UpdateUser(tag string, added []panel.UserInfo, deleted []panel.UserInfo) {
+func (l *Limiter) UpdateUser(tag string, added []panel.UserInfo, deleted []panel.UserInfo, modified []panel.UserInfo) {
 	for i := range deleted {
 		l.UserLimitInfo.Delete(format.UserTag(tag, deleted[i].Uuid))
 		l.UserOnlineIP.Delete(format.UserTag(tag, deleted[i].Uuid))
 		l.SpeedLimiter.Delete(format.UserTag(tag, deleted[i].Uuid))
 		delete(l.UUIDtoUID, deleted[i].Uuid)
 		delete(l.AliveList, deleted[i].Id)
+	}
+	for i := range modified {
+		if v, ok := l.UserLimitInfo.Load(format.UserTag(tag, modified[i].Uuid)); ok {
+			u := v.(*UserLimitInfo)
+			u.SpeedLimit = modified[i].SpeedLimit
+			u.DeviceLimit = modified[i].DeviceLimit
+			l.UserLimitInfo.Store(format.UserTag(tag, modified[i].Uuid), u)
+		}
+		limit := int64(determineSpeedLimit(l.SpeedLimit, modified[i].SpeedLimit)) * 1000000 / 8
+		if limit > 0 {
+			if v, ok := l.SpeedLimiter.Load(format.UserTag(tag, modified[i].Uuid)); ok {
+				d := v.(*rate.DynamicBucket)
+				d.Update(limit)
+			} else {
+				d := rate.NewDynamicBucket(limit)
+				l.SpeedLimiter.Store(format.UserTag(tag, modified[i].Uuid), d)
+			}
+		} else {
+			l.SpeedLimiter.Delete(format.UserTag(tag, modified[i].Uuid))
+		}
 	}
 	for i := range added {
 		userLimit := &UserLimitInfo{
@@ -121,7 +141,7 @@ func (l *Limiter) UpdateDynamicSpeedLimit(tag, uuid string, limit int, expire ti
 	return nil
 }
 
-func (l *Limiter) CheckLimit(taguuid string, ip string, isTcp bool, noSSUDP bool) (Bucket *ratelimit.Bucket, Reject bool) {
+func (l *Limiter) CheckLimit(taguuid string, ip string, isTcp bool, noSSUDP bool) (DynamicBucket *rate.DynamicBucket, Reject bool) {
 	// check if ipv4 mapped ipv6
 	ip = strings.TrimPrefix(ip, "::ffff:")
 
@@ -185,12 +205,12 @@ func (l *Limiter) CheckLimit(taguuid string, ip string, isTcp bool, noSSUDP bool
 
 	limit := int64(determineSpeedLimit(nodeLimit, userLimit)) * 1000000 / 8 // If you need the Speed limit
 	if limit > 0 {
-		Bucket = ratelimit.NewBucketWithQuantum(time.Second, limit, limit) // Byte/s
-		if v, ok := l.SpeedLimiter.LoadOrStore(taguuid, Bucket); ok {
-			return v.(*ratelimit.Bucket), false
+		if v, ok := l.SpeedLimiter.Load(taguuid); ok {
+			return v.(*rate.DynamicBucket), false
 		} else {
-			l.SpeedLimiter.Store(taguuid, Bucket)
-			return Bucket, false
+			d := rate.NewDynamicBucket(limit)
+			l.SpeedLimiter.Store(taguuid, d)
+			return d, false
 		}
 	} else {
 		return nil, false
