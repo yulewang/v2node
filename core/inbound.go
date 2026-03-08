@@ -354,7 +354,6 @@ func buildShadowsocks(nodeInfo *panel.NodeInfo, inbound *coreConf.InboundDetourC
 	settings.Users = append(settings.Users, defaultSSuser)
 	// Default: support both tcp and udp
 	settings.NetworkList = &coreConf.NetworkList{"tcp", "udp"}
-	settings.IVCheck = true
 	// Only set StreamSetting when NetworkSettings is configured
 	if len(s.NetworkSettings) != 0 {
 		shttp := &ShadowsocksHTTPNetworkSettings{}
