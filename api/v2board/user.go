@@ -1,6 +1,8 @@
 package panel
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -31,13 +33,17 @@ type AliveMap struct {
 }
 
 // GetUserList will pull user from v2board
-func (c *Client) GetUserList() ([]UserInfo, error) {
+func (c *Client) GetUserList(ctx context.Context) ([]UserInfo, error) {
 	const path = "/api/v1/server/UniProxy/user"
 	r, err := c.client.R().
+		SetContext(ctx).
 		SetHeader("If-None-Match", c.userEtag).
 		SetHeader("X-Response-Format", "msgpack").
 		SetDoNotParseResponse(true).
 		Get(path)
+	if err != nil {
+		return nil, err
+	}
 	if r == nil || r.RawResponse == nil {
 		return nil, fmt.Errorf("received nil response or raw response")
 	}
@@ -45,9 +51,6 @@ func (c *Client) GetUserList() ([]UserInfo, error) {
 
 	if r.StatusCode() == 304 {
 		return nil, nil
-	}
-	if err != nil {
-		return nil, err
 	}
 	userlist := &UserListBody{}
 	if strings.Contains(r.Header().Get("Content-Type"), "application/x-msgpack") {
@@ -90,18 +93,21 @@ func (c *Client) GetUserList() ([]UserInfo, error) {
 }
 
 // GetUserAlive will fetch the alive_ip count for users
-func (c *Client) GetUserAlive() (map[int]int, error) {
+func (c *Client) GetUserAlive(ctx context.Context) (map[int]int, error) {
 	c.AliveMap = &AliveMap{}
 	const path = "/api/v1/server/UniProxy/alivelist"
 	r, err := c.client.R().
+		SetContext(ctx).
 		ForceContentType("application/json").
 		Get(path)
-	if err != nil || r.StatusCode() >= 399 {
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		c.AliveMap.Alive = make(map[int]int)
 		return c.AliveMap.Alive, nil
 	}
-	if r == nil || r.RawResponse == nil {
-		fmt.Printf("received nil response or raw response")
+	if r == nil || r.RawResponse == nil || r.StatusCode() >= 399 {
 		c.AliveMap.Alive = make(map[int]int)
 		return c.AliveMap.Alive, nil
 	}
@@ -121,13 +127,14 @@ type UserTraffic struct {
 }
 
 // ReportUserTraffic reports the user traffic
-func (c *Client) ReportUserTraffic(userTraffic []UserTraffic) error {
+func (c *Client) ReportUserTraffic(ctx context.Context, userTraffic []UserTraffic) error {
 	data := make(map[int][]int64, len(userTraffic))
 	for i := range userTraffic {
 		data[userTraffic[i].UID] = []int64{userTraffic[i].Upload, userTraffic[i].Download}
 	}
 	const path = "/api/v1/server/UniProxy/push"
 	_, err := c.client.R().
+		SetContext(ctx).
 		SetBody(data).
 		ForceContentType("application/json").
 		Post(path)
@@ -137,15 +144,16 @@ func (c *Client) ReportUserTraffic(userTraffic []UserTraffic) error {
 	return nil
 }
 
-func (c *Client) ReportNodeOnlineUsers(data *map[int][]string) error {
+func (c *Client) ReportNodeOnlineUsers(ctx context.Context, data *map[int][]string) error {
 	const path = "/api/v1/server/UniProxy/alive"
 	_, err := c.client.R().
+		SetContext(ctx).
 		SetBody(data).
 		ForceContentType("application/json").
 		Post(path)
 
 	if err != nil {
-		return nil
+		return err
 	}
 
 	return nil

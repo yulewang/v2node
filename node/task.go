@@ -1,6 +1,8 @@
 package node
 
 import (
+	"context"
+	"errors"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -15,14 +17,14 @@ func (c *Controller) startTasks(node *panel.NodeInfo) {
 		Name:     "nodeInfoMonitor",
 		Interval: node.PullInterval,
 		Execute:  c.nodeInfoMonitor,
-		Reload:   c.reloadTask,
+		ReloadCh: c.server.ReloadCh,
 	}
 	// fetch user list task
 	c.userReportPeriodic = &task.Task{
 		Name:     "reportUserTrafficTask",
 		Interval: node.PushInterval,
 		Execute:  c.reportUserTrafficTask,
-		Reload:   c.reloadTask,
+		ReloadCh: c.server.ReloadCh,
 	}
 	log.WithField("tag", c.tag).Info("Start monitor node status")
 	// delay to start nodeInfoMonitor
@@ -37,7 +39,7 @@ func (c *Controller) startTasks(node *panel.NodeInfo) {
 				Name:     "renewCertTask",
 				Interval: time.Hour * 24,
 				Execute:  c.renewCertTask,
-				Reload:   c.reloadTask,
+				ReloadCh: c.server.ReloadCh,
 			}
 			log.WithField("tag", c.tag).Info("Start renew cert")
 			// delay to start renewCert
@@ -46,24 +48,13 @@ func (c *Controller) startTasks(node *panel.NodeInfo) {
 	}
 }
 
-func (c *Controller) reloadTask() {
-	newClient, err := panel.New(c.conf)
-	if err != nil {
-		log.Panic("Tasks reload failed")
-	}
-	c.apiClient = newClient
-	c.nodeInfoMonitorPeriodic.Close()
-	c.userReportPeriodic.Close()
-	if c.renewCertPeriodic != nil {
-		c.renewCertPeriodic.Close()
-	}
-	c.startTasks(c.info)
-}
-
-func (c *Controller) nodeInfoMonitor() (err error) {
+func (c *Controller) nodeInfoMonitor(ctx context.Context) (err error) {
 	// get node info
-	newN, err := c.apiClient.GetNodeInfo()
+	newN, err := c.apiClient.GetNodeInfo(ctx)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
 		log.WithFields(log.Fields{
 			"tag": c.tag,
 			"err": err,
@@ -74,7 +65,6 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 		log.WithFields(log.Fields{
 			"tag": c.tag,
 		}).Error("Got new node info, reload")
-		// Non-blocking signal to avoid goroutine stuck when channel is full or nil
 		if c.server.ReloadCh != nil {
 			select {
 			case c.server.ReloadCh <- struct{}{}:
@@ -87,8 +77,11 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 	log.WithField("tag", c.tag).Debug("Node info no change")
 
 	// get user info
-	newU, err := c.apiClient.GetUserList()
+	newU, err := c.apiClient.GetUserList(ctx)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
 		log.WithFields(log.Fields{
 			"tag": c.tag,
 			"err": err,
@@ -96,8 +89,11 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 		return nil
 	}
 	// get user alive
-	newA, err := c.apiClient.GetUserAlive()
+	newA, err := c.apiClient.GetUserAlive(ctx)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
 		log.WithFields(log.Fields{
 			"tag": c.tag,
 			"err": err,
