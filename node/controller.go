@@ -1,6 +1,7 @@
 package node
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -44,28 +45,28 @@ func (c *Controller) Start(x *core.V2Core) error {
 	// First fetch Node Info
 	node := c.info
 	if node == nil {
-		c.info, err = c.apiClient.GetNodeInfo()
+		c.info, err = c.apiClient.GetNodeInfo(context.Background())
 		if err != nil {
 			return fmt.Errorf("get node info error: %s", err)
 		}
 		node = c.info
 	}
 	// Update user
-	c.userList, err = c.apiClient.GetUserList()
+	c.userList, err = c.apiClient.GetUserList(context.Background())
 	if err != nil {
 		return fmt.Errorf("get user list error: %s", err)
 	}
 	if len(c.userList) == 0 {
 		return errors.New("add users error: not have any user")
 	}
-	c.aliveMap, err = c.apiClient.GetUserAlive()
+	c.aliveMap, err = c.apiClient.GetUserAlive(context.Background())
 	if err != nil {
 		return fmt.Errorf("failed to get user alive list: %s", err)
 	}
 	c.tag = node.Tag
 
 	// add limiter
-	l := limiter.AddLimiter(c.tag, c.userList, c.aliveMap)
+	l := limiter.AddLimiter(c.info.Type, c.tag, c.userList, c.aliveMap)
 	c.limiter = l
 	if node.Security == panel.Tls {
 		err = c.requestCert()
