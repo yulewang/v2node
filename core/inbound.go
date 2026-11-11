@@ -95,6 +95,17 @@ func buildInbound(nodeInfo *panel.NodeInfo, tag string) (*core.InboundHandlerCon
 			}
 		}
 	}
+	// Set socket settings for trusted X-Forwarded-For headers
+	if len(nodeInfo.Common.TrustedXForwardedFor) > 0 {
+		if in.StreamSetting == nil {
+			return nil, errors.New("stream settings must be configured to set trusted X-Forwarded-For headers")
+		}
+		if in.StreamSetting.SocketSettings == nil {
+			in.StreamSetting.SocketSettings = &coreConf.SocketConfig{}
+		}
+		in.StreamSetting.SocketSettings.TrustedXForwardedFor = nodeInfo.Common.TrustedXForwardedFor
+	}
+
 	// Set server port
 	in.PortList = &coreConf.PortList{
 		Range: []coreConf.PortRange{
@@ -163,13 +174,14 @@ func buildInbound(nodeInfo *panel.NodeInfo, tag string) (*core.InboundHandlerCon
 			return nil, fmt.Errorf("marshal reality dest error: %s", err)
 		}
 		in.StreamSetting.REALITYSettings = &coreConf.REALITYConfig{
-			Dest:        d,
-			Xver:        xver,
-			Show:        false,
-			ServerNames: serverNames,
-			PrivateKey:  v.TlsSettings.PrivateKey,
-			ShortIds:    shortIds,
-			Mldsa65Seed: v.TlsSettings.Mldsa65Seed,
+			Dest:         d,
+			Xver:         xver,
+			Show:         false,
+			ServerNames:  serverNames,
+			PrivateKey:   v.TlsSettings.PrivateKey,
+			MinClientVer: "0.0.1",
+			ShortIds:     shortIds,
+			Mldsa65Seed:  v.TlsSettings.Mldsa65Seed,
 		}
 	default:
 		break
@@ -343,7 +355,11 @@ func buildShadowsocks(nodeInfo *panel.NodeInfo, inbound *coreConf.InboundDetourC
 	settings := &coreConf.ShadowsocksServerConfig{
 		Cipher: s.Cipher,
 	}
-	p := make([]byte, 32)
+	keyLength := 32
+	if s.Cipher == "2022-blake3-aes-128-gcm" {
+		keyLength = 16
+	}
+	p := make([]byte, keyLength)
 	_, err := rand.Read(p)
 	if err != nil {
 		return fmt.Errorf("generate random password error: %s", err)
@@ -352,7 +368,7 @@ func buildShadowsocks(nodeInfo *panel.NodeInfo, inbound *coreConf.InboundDetourC
 	cipher := s.Cipher
 	if s.ServerKey != "" {
 		settings.Password = s.ServerKey
-		randomPasswd = base64.StdEncoding.EncodeToString([]byte(randomPasswd))
+		randomPasswd = base64.StdEncoding.EncodeToString(p)
 		cipher = ""
 	}
 	defaultSSuser := &coreConf.ShadowsocksUserConfig{
@@ -429,25 +445,22 @@ func buildHysteria2(nodeInfo *panel.NodeInfo, inbound *coreConf.InboundDetourCon
 	hysteriasetting := &coreConf.HysteriaConfig{
 		Version: 2,
 	}
-	var finalmask *coreConf.FinalMask
+	finalmask := &coreConf.FinalMask{}
 	if !s.Ignore_Client_Bandwidth && (s.UpMbps > 0 || s.DownMbps > 0) {
-		finalmask = &coreConf.FinalMask{
-			QuicParams: &coreConf.QuicParamsConfig{
-				Congestion: "force-brutal",
-				BrutalUp:   up,
-				BrutalDown: down,
-			},
+		finalmask.QuicParams = &coreConf.QuicParamsConfig{
+			Congestion: "force-brutal",
+			BrutalUp:   up,
+			BrutalDown: down,
 		}
 	}
 	if s.Obfs != "" && s.ObfsPassword != "" {
 		rawobfsJSON := json.RawMessage(fmt.Sprintf(`{"password":"%s"}`, s.ObfsPassword))
-		udp := []conf.Mask{
+		finalmask.Udp = []conf.Mask{
 			{
 				Type:     s.Obfs,
 				Settings: &rawobfsJSON,
 			},
 		}
-		finalmask.Udp = udp
 	}
 	inbound.StreamSetting.FinalMask = finalmask
 	sets, err := json.Marshal(settings)
